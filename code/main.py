@@ -56,45 +56,100 @@ print(df.head(5))
 print(df.columns)
 
 # Database: connect and load dataframe into the `customer` table
-# Call the connection function (was assigned as the function object previously)
 conn = get_db_connection()
 table_name = "customer"
 
+# Load DataFrame into SQL Server customer table
 if conn is None:
-    print("No DB connection available; skipping DB load.")
+    print("No database connection available - aborting load.")
 else:
+    cursor = conn.cursor()
+
+    # Create table if not exists (SQL Server compatible)
+    create_table_sql = f"""
+IF OBJECT_ID('dbo.{table_name}', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.{table_name} (
+        customer_id INT PRIMARY KEY,
+        age INT,
+        gender NVARCHAR(20),
+        item_purchased NVARCHAR(255),
+        category NVARCHAR(100),
+        purchase_amount FLOAT,
+        location NVARCHAR(100),
+        size NVARCHAR(20),
+        color NVARCHAR(50),
+        season NVARCHAR(50),
+        review_rating FLOAT,
+        subscription_status NVARCHAR(10),
+        shipping_type NVARCHAR(50),
+        discount_applied NVARCHAR(10),
+        previous_purchases INT,
+        payment_method NVARCHAR(50),
+        frequency_of_purchases NVARCHAR(50),
+        age_group NVARCHAR(50),
+        purchase_frequency_days INT
+    )
+END
+"""
+
     try:
-        # Prefer using SQLAlchemy engine for df.to_sql
-        import sqlalchemy
-        from urllib.parse import quote_plus
-
-        server = r"localhost\SQLEXPRESS"
-        database = "customer_behavior"
-        odbc_str = (
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={server};"
-            f"DATABASE={database};"
-            "Trusted_Connection=yes;"
-        )
-
-        connect_url = "mssql+pyodbc:///?odbc_connect=" + quote_plus(odbc_str)
-        engine = sqlalchemy.create_engine(connect_url, fast_executemany=True)
-
-        # Write dataframe to the database (replace the table if it exists)
-        df.to_sql(table_name, con=engine, if_exists="replace", index=False)
-        print(f"Data written to table '{table_name}' (if_exists='replace').")
-
-        # Read back a few rows to verify
-        df_db = pd.read_sql_query(f"SELECT TOP 5 * FROM {table_name}", con=engine)
-        print(df_db.head())
-
-    except ModuleNotFoundError as e:
-        print("Required package missing:", e)
-        print("Install with: .venv\\Scripts\\python -m pip install sqlalchemy pyodbc")
+        cursor.execute(create_table_sql)
+        conn.commit()
+        print(f"Table '{table_name}' is ready.")
     except Exception as e:
-        print("Error loading data into DB:", e)
+        print("Error creating table:", e)
+
+    # Optional: clear table before loading to avoid duplicates
+    try:
+        cursor.execute(f"IF OBJECT_ID('dbo.{table_name}', 'U') IS NOT NULL BEGIN DELETE FROM dbo.{table_name} END")
+        conn.commit()
+        print(f"Existing rows in '{table_name}' cleared.")
+    except Exception:
+        pass
+
+    # Prepare columns & insert
+    columns = [
+        "customer_id",
+        "age",
+        "gender",
+        "item_purchased",
+        "category",
+        "purchase_amount",
+        "location",
+        "size",
+        "color",
+        "season",
+        "review_rating",
+        "subscription_status",
+        "shipping_type",
+        "discount_applied",
+        "previous_purchases",
+        "payment_method",
+        "frequency_of_purchases",
+        "age_group",
+        "purchase_frequency_days",
+    ]
+
+    placeholders = ",".join(["?" for _ in columns])
+    insert_sql = f"INSERT INTO dbo.{table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+
+    # Build rows, converting NaNs to None
+    rows = []
+    for row in df[columns].itertuples(index=False, name=None):
+        clean_row = tuple((None if (isinstance(v, float) and np.isnan(v)) else v) for v in row)
+        rows.append(clean_row)
+
+    # Bulk insert using pyodbc
+    try:
+        cursor.fast_executemany = True
+        cursor.executemany(insert_sql, rows)
+        conn.commit()
+        print(f"Inserted {len(rows)} rows into '{table_name}'.")
+    except Exception as e:
+        print("Error inserting rows:", e)
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        cursor.close()
+        conn.close()
+
+
