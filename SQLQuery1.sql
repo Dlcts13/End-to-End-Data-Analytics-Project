@@ -39,11 +39,50 @@ GROUP by item_purchased
 ORDER BY discount_percentage DESC;
 
 --Segment customers into New, Returning, and Loyal based on their total number of previous purchases and show the count of each segment
-SELECT customer_id, (
-	CASE 
-	WHEN previous_purchases = 1 THEN 'New'
+WITH customer_type AS (
+SELECT customer_id, previous_purchases,
+CASE
+	WHEN previous_purchases =1 THEN 'New'
 	WHEN previous_purchases BETWEEN 2 AND 10 THEN 'Returning'
-	WHEN previous_purchases >10 THEN 'Loyal'
-	END) AS customer_type
+	ELSE 'Loyal'
+	END AS customer_segment
+FROM dbo.customer)
+
+SELECT customer_segment, COUNT(*) AS 'Number of customers'
+FROM customer_type
+GROUP BY customer_segment;
+
+--What are the top 3 most purchased products in each category
+WITH item_counts AS (
+SELECT category, item_purchased,
+COUNT(customer_id) AS total_orders,
+ROW_NUMBER() OVER (
+PARTITION BY category ORDER BY COUNT(customer_id) DESC)
+AS item_rank
 FROM customer
-GROUP BY customer_id
+group by category, item_purchased
+)
+
+SELECT item_rank, category, item_purchased, total_orders
+FROM item_counts 
+WHERE item_rank<=3
+
+--Are customers who are repeat buyers(more than 5 previous purchases) also likely to subscribe?
+SELECT 
+    SUM(CASE WHEN previous_purchases > 5 THEN 1 ELSE 0 END) AS repeat_buyers_count,
+    SUM(CASE WHEN previous_purchases <= 5 THEN 1 ELSE 0 END) AS non_repeat_buyers_count,
+	ROUND(
+		(SUM(CASE WHEN previous_purchases > 5 THEN 100.0 ELSE 0.0 END) / COUNT(*)),2) AS percent_per_repeat
+FROM customer
+WHERE subscription_status = 'Yes';
+
+--What is the revenue contribution for each age group
+SELECT DISTINCT age_group 
+FROM customer
+
+SELECT DISTINCT age_group, SUM(purchase_amount) AS revenue_per_age_group
+FROM customer
+GROUP BY age_group 
+ORDER BY revenue_per_age_group DESC
+
+
